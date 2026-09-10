@@ -1,0 +1,117 @@
+// Editor-only placement recipe, executed through Unity MCP. Not a runtime script.
+// Existing scene objects are never modified. Imported models/materials stay intact.
+var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+if (scene.name != "InGame" || Application.isPlaying) return "Requires InGame in Edit Mode.";
+if (GameObject.Find("CircuitScenery") != null) return "CircuitScenery already exists; no duplicate created.";
+var path = UnityEngine.Object.FindFirstObjectByType<PlayGoKart.Gameplay.AIWaypointPath>();
+if (path == null) return "No route found; no changes made.";
+var root = new GameObject("CircuitScenery");
+Undo.RegisterCreatedObjectUndo(root, "Decorate circuit surroundings");
+var groups = new System.Collections.Generic.Dictionary<string, Transform>();
+foreach (var name in new[] { "Landscape", "StartFinish_Grandstands", "Paddock", "Trackside_Signage", "Woodland_Outer", "Woodland_Infield" }) {
+    var g = new GameObject(name); g.transform.SetParent(root.transform, false); groups[name] = g.transform;
+}
+System.Func<GameObject, Bounds> boundsOf = g => {
+    var rs = g.GetComponentsInChildren<Renderer>(true);
+    var b = rs[0].bounds; for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds); return b;
+};
+System.Func<Vector3, float> routeDistance = p => {
+    float nearest = float.MaxValue; p.y = 0;
+    for (int i = 0; i < path.Count; i++) {
+        var a = path.GetPosition(i); var b = path.GetPosition((i + 1) % path.Count); a.y = b.y = 0;
+        var d = b - a; float t = Mathf.Clamp01(Vector3.Dot(p - a, d) / Mathf.Max(d.sqrMagnitude, 0.001f));
+        nearest = Mathf.Min(nearest, Vector3.Distance(p, a + d * t));
+    } return nearest;
+};
+var placed = new System.Collections.Generic.List<Bounds>();
+System.Func<string, string, string, Vector3, Vector3, float, GameObject> add = (model, name, group, center, scale, yaw) => {
+    var asset = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Background/Models/FBX format/" + model + ".fbx");
+    if (asset == null) throw new System.Exception("Missing model: " + model);
+    var g = (GameObject)PrefabUtility.InstantiatePrefab(asset, scene);
+    g.name = name; g.transform.SetParent(groups[group], false);
+    g.transform.localScale = scale; g.transform.rotation = Quaternion.Euler(0, yaw, 0);
+    var b = boundsOf(g);
+    g.transform.position += center - new Vector3(b.center.x, b.min.y, b.center.z);
+    // Scenery is visual only: it cannot affect kart grounding, AI probes or collision audio.
+    foreach (var c in g.GetComponentsInChildren<Collider>(true)) c.enabled = false;
+    foreach (var r in g.GetComponentsInChildren<Renderer>(true)) {
+        r.receiveShadows = true;
+        PrefabUtility.RecordPrefabInstancePropertyModifications(r);
+    }
+    PrefabUtility.RecordPrefabInstancePropertyModifications(g.transform);
+    if (group != "Landscape") placed.Add(boundsOf(g));
+    return g;
+};
+if (!AssetDatabase.IsValidFolder("Assets/Background/SceneryMaterials")) AssetDatabase.CreateFolder("Assets/Background", "SceneryMaterials");
+var grassAsset = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Background/Models/FBX format/grass.fbx");
+var source = grassAsset.GetComponentInChildren<Renderer>().sharedMaterial;
+System.Func<string, Color, Material> material = (name, color) => {
+    string p = "Assets/Background/SceneryMaterials/" + name + ".mat";
+    var m = AssetDatabase.LoadAssetAtPath<Material>(p);
+    if (m == null) { m = new Material(source); m.name = name; m.color = color; AssetDatabase.CreateAsset(m, p); }
+    return m;
+};
+var lawn = material("Circuit_Lawn", new Color(0.25f, 0.44f, 0.28f, 1));
+var paving = material("Circuit_PaddockPaving", new Color(0.46f, 0.49f, 0.46f, 1));
+var treeMats = new[] {
+    material("Foliage_Sage", new Color(0.31f, 0.55f, 0.39f, 1)),
+    material("Foliage_Pine", new Color(0.18f, 0.38f, 0.27f, 1)),
+    material("Foliage_Lime", new Color(0.40f, 0.57f, 0.29f, 1))
+};
+var field = add("grass", "Circuit_GrassSurround", "Landscape", new Vector3(0, 5.70f, 0), new Vector3(70, 1, 70), 0);
+field.GetComponentInChildren<Renderer>().sharedMaterial = lawn;
+var pad = add("grass", "Grandstand_Concourse", "Landscape", new Vector3(5, 5.72f, 112), new Vector3(7.6f, 1, 2.1f), -30);
+pad.GetComponentInChildren<Renderer>().sharedMaterial = paving;
+pad = add("grass", "Paddock_Apron", "Landscape", new Vector3(30, 5.72f, 56), new Vector3(5.8f, 1, 3.0f), -30);
+pad.GetComponentInChildren<Renderer>().sharedMaterial = paving;
+for (int i = 0; i < 5; i++) {
+    var center = new Vector3(-20 + i * 12.5f, 5.74f, 98 + i * 7.2f);
+    add(i == 0 || i == 4 ? "grandStand" : "grandStandCovered", "SpectatorStand_" + (i + 1), "StartFinish_Grandstands", center, Vector3.one * 1.2f, -30);
+}
+for (int i = 0; i < 3; i++) {
+    add("pitsGarage", "PitGarage_" + (i + 1), "Paddock", new Vector3(18 + i * 10, 5.74f, 57 + i * 5.77f), Vector3.one * 1.05f, 150);
+}
+add("pitsOffice", "RaceOffice", "Paddock", new Vector3(45, 5.74f, 46), Vector3.one * 1.05f, 150);
+add("tentLong", "TeamHospitality", "Paddock", new Vector3(13, 5.74f, 35), Vector3.one * 0.85f, -30);
+add("tentRoofDouble", "ServiceCanopy", "Paddock", new Vector3(34, 5.74f, 31), Vector3.one * 0.8f, -30);
+add("tentClosed", "MarshalTent", "Paddock", new Vector3(54, 5.74f, 30), Vector3.one * 0.85f, 150);
+foreach (var p in new[] { new Vector3(-31, 5.74f, 91), new Vector3(42, 5.74f, 131) })
+    add("flagCheckers", "Grandstand_CheckeredFlag", "StartFinish_Grandstands", p, Vector3.one * 1.15f, -30);
+add("bannerTowerRed", "Paddock_RedTower", "Paddock", new Vector3(7, 5.74f, 58), Vector3.one, 150);
+add("bannerTowerGreen", "Paddock_GreenTower", "Paddock", new Vector3(57, 5.74f, 64), Vector3.one, 150);
+foreach (var p in new[] { new Vector3(-34, 5.74f, 108), new Vector3(45, 5.74f, 145), new Vector3(6, 5.74f, 45), new Vector3(62, 5.74f, 43) })
+    add("lightPostLarge", "Venue_LightPost", "Trackside_Signage", p, Vector3.one * 1.5f, -30);
+var signs = new[] { new Vector3(76, 5.74f, 122), new Vector3(126, 5.74f, 58), new Vector3(97, 5.74f, -34), new Vector3(29, 5.74f, -111), new Vector3(-61, 5.74f, -119), new Vector3(-122, 5.74f, 18), new Vector3(-79, 5.74f, 96) };
+for (int i = 0; i < signs.Length; i++) {
+    int closest = 0; float best = float.MaxValue;
+    for (int j = 0; j < path.Count; j++) { float d = (path.GetPosition(j) - signs[i]).sqrMagnitude; if (d < best) { best = d; closest = j; } }
+    var facing = path.GetPosition(closest) - signs[i]; facing.y = 0;
+    float yaw = Quaternion.LookRotation(-facing).eulerAngles.y;
+    add(i % 2 == 0 ? "billboard" : "billboardLow", "SponsorBillboard_" + (i + 1), "Trackside_Signage", signs[i], Vector3.one * 1.25f, yaw);
+}
+// Seeded clusters with empty clearings, rather than evenly spaced roadside trees.
+var random = new System.Random(93026);
+var clusters = new[] { new Vector3(-145,0,75),new Vector3(-152,0,5),new Vector3(-104,0,-62),new Vector3(-70,0,-149),new Vector3(5,0,-153),new Vector3(72,0,-109),new Vector3(124,0,-41),new Vector3(150,0,36),new Vector3(119,0,121),new Vector3(63,0,157),new Vector3(-51,0,130), new Vector3(-54,0,27),new Vector3(-12,0,-29),new Vector3(36,0,3),new Vector3(-28,0,-63) };
+int treeCount = 0;
+for (int c = 0; c < clusters.Length; c++) {
+    for (int j = 0; j < 15; j++) {
+        float angle = (float)random.NextDouble() * Mathf.PI * 2;
+        float radius = Mathf.Sqrt((float)random.NextDouble()) * (c < 11 ? 26 : 19);
+        var p = clusters[c] + new Vector3(Mathf.Cos(angle) * radius, 5.71f, Mathf.Sin(angle) * radius);
+        if (routeDistance(p) < 21) continue;
+        bool blocked = false;
+        foreach (var b in placed) { var box = b; box.Expand(new Vector3(8,100,8)); if (box.Contains(new Vector3(p.x, b.center.y, p.z))) { blocked = true; break; } }
+        if (blocked) continue;
+        float scale = 0.65f + (float)random.NextDouble() * 0.65f;
+        var tree = add(j % 3 == 0 ? "treeSmall" : "treeLarge", "Tree_" + (++treeCount).ToString("000"), c < 11 ? "Woodland_Outer" : "Woodland_Infield", p, Vector3.one * scale, (float)random.NextDouble() * 360);
+        foreach (var r in tree.GetComponentsInChildren<Renderer>()) {
+            var mats = r.sharedMaterials; for (int m = 0; m < mats.Length; m++) if (mats[m] != null && mats[m].name == "grass") mats[m] = treeMats[treeCount % treeMats.Length]; r.sharedMaterials = mats;
+        }
+    }
+}
+foreach (var t in root.GetComponentsInChildren<Transform>(true)) {
+    if (PrefabUtility.IsPartOfPrefabInstance(t)) { PrefabUtility.RecordPrefabInstancePropertyModifications(t); foreach (var r in t.GetComponents<Renderer>()) PrefabUtility.RecordPrefabInstancePropertyModifications(r); }
+}
+UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
+AssetDatabase.SaveAssets();
+return "Created CircuitScenery: " + placed.Count + " props including " + treeCount + " trees, plus 3 landscape surfaces. Existing objects untouched. Scene not yet saved pending visual checks.";

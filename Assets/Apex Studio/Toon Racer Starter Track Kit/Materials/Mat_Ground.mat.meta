@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 811dbc42f13e5ea47b0156d108a9a653
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 374574
+  packageName: 'Toon Racer: Starter Track Kit'
+  packageVersion: 1.0
+  assetPath: Assets/Apex Studio/Toon Racer Starter Track Kit/Materials/Mat_Ground.mat
+  uploadId: 920118
